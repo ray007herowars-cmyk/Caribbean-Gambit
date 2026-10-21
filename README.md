@@ -54,7 +54,7 @@ There is nothing to build or install.
 **Option 2: run a local server**
 
 ```bash
-git clone https://github.com/<your-username>/caribbean-gambit.git
+git clone https://github.com/ray007herowars-cmyk/caribbean-gambit.git
 cd caribbean-gambit
 python3 -m http.server 8000
 # open http://localhost:8000
