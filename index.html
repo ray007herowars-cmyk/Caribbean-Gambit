@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caribbean Gambit — a pirate chess ladder</title>
+<meta name="description" content="A pirate-themed chess ladder. Beat twenty AI captains, earn ship badges and rise from Castaway to Admiral of the Seven Seas. Free, single-player, runs in your browser.">
+<meta name="theme-color" content="#02060f">
+<meta property="og:type" content="website"><meta property="og:title" content="Caribbean Gambit"><meta property="og:description" content="Twenty captains. Twenty ship badges. One chess board."><meta property="og:image" content="assets/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png"><link rel="manifest" href="site.webmanifest">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=IM+Fell+English:ital@0;1&family=Pirata+One&display=swap">
+<script>
+/* Startup error reporter: shows a visible message instead of a silent blank page */
+addEventListener('error',function(e){var x=document.getElementById('err');if(x){x.hidden=false;x.textContent='Something went wrong while running the game: '+(e.message||'unknown error')+'. Try a hard reload (Ctrl/Cmd+Shift+R). If it keeps happening, please open an issue with this message.'}});
+</script>
+<script>
+/* ENGINE-START */
+const SQN=[];for(let i=0;i<64;i++)SQN.push('abcdefgh'[i&7]+(1+(i>>3)));
+const sqi=s=>(s.charCodeAt(0)-97)+(s.charCodeAt(1)-49)*8;
+const KN_=[[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]],KG_=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],DG_=[[1,1],[-1,1],[-1,-1],[1,-1]],OR_=[[1,0],[-1,0],[0,1],[0,-1]];
+const CR_={4:3,0:2,7:1,60:12,56:8,63:4},START_='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',PCH_='pnbrqk';
+/* Self-contained chess rules engine (chess.js-style API). Squares: a1=0 ... h8=63. Pieces: 1 P,2 N,3 B,4 R,5 Q,6 K; white positive, black negative. */
+class Chess{
+ constructor(fen){this.load(fen||START_)}
+ reset(){this.load(START_)}
+ load(fen){const [pl,tc,ca,ep,hm,fm]=fen.trim().split(/\s+/);this.b=new Array(64).fill(0);let r=7,f=0;
+  for(const ch of pl){if(ch==='/'){r--;f=0}else if(ch>='1'&&ch<='8')f+=+ch;else{const t=PCH_.indexOf(ch.toLowerCase())+1;this.b[r*8+f]=ch===ch.toUpperCase()?t:-t;f++}}
+  this.w=tc==='w';this.cs=(ca.includes('K')?1:0)|(ca.includes('Q')?2:0)|(ca.includes('k')?4:0)|(ca.includes('q')?8:0);
+  this.ep=ep&&ep!=='-'?sqi(ep):-1;this.half=+hm||0;this.full=+fm||1;this.st=[];this.sans=[];this.ks=[this.b.indexOf(6),this.b.indexOf(-6)];this.keys=[this.key()];return true}
+ clone(){const c=new Chess();c.b=this.b.slice();c.w=this.w;c.cs=this.cs;c.ep=this.ep;c.half=this.half;c.full=this.full;c.ks=this.ks.slice();c.st=[];c.sans=[];c.keys=[];return c}
+ epv(){if(this.ep<0)return false;const s=this.w?this.ep-8:this.ep+8,me=this.w?1:-1,f=this.ep&7;return(f>0&&this.b[s-1]===me)||(f<7&&this.b[s+1]===me)}
+ key(){return this.b.join(',')+(this.w?'w':'b')+this.cs+(this.epv()?this.ep:'')}
+ att(s,byW){const b=this.b,by=byW?1:-1,f=s&7,r=s>>3,pr=byW?r-1:r+1;
+  if(pr>=0&&pr<8){if(f>0&&b[pr*8+f-1]===by)return true;if(f<7&&b[pr*8+f+1]===by)return true}
+  for(const d of KN_){const x=f+d[0],y=r+d[1];if(x>=0&&x<8&&y>=0&&y<8&&b[y*8+x]===by*2)return true}
+  for(const d of KG_){const x=f+d[0],y=r+d[1];if(x>=0&&x<8&&y>=0&&y<8&&b[y*8+x]===by*6)return true}
+  for(const d of DG_){let x=f+d[0],y=r+d[1];while(x>=0&&x<8&&y>=0&&y<8){const v=b[y*8+x];if(v){if(v===by*3||v===by*5)return true;break}x+=d[0];y+=d[1]}}
+  for(const d of OR_){let x=f+d[0],y=r+d[1];while(x>=0&&x<8&&y>=0&&y<8){const v=b[y*8+x];if(v){if(v===by*4||v===by*5)return true;break}x+=d[0];y+=d[1]}}
+  return false}
+ inCheck(){return this.att(this.ks[this.w?0:1],!this.w)}
+ addP(o,f,t,c,promo){if(promo){for(const p of[5,4,3,2])o.push({f,t,p:1,c,pr:p,fl:0})}else o.push({f,t,p:1,c,pr:0,fl:0})}
+ pseudo(){const o=[],b=this.b,us=this.w?1:-1;
+  for(let s=0;s<64;s++){const v=b[s]*us;if(v<=0)continue;const f=s&7,r=s>>3;
+   if(v===1){const dir=this.w?8:-8,sr=this.w?1:6,pr=this.w?6:1,t=s+dir;
+    if(b[t]===0){this.addP(o,s,t,0,r===pr);if(r===sr&&b[t+dir]===0)o.push({f:s,t:t+dir,p:1,c:0,pr:0,fl:0})}
+    for(const df of[-1,1]){const nf=f+df;if(nf<0||nf>7)continue;const t2=t+df,tv=b[t2]*us;
+     if(tv<0)this.addP(o,s,t2,-tv,r===pr);else if(tv===0&&t2===this.ep)o.push({f:s,t:t2,p:1,c:1,pr:0,fl:1})}}
+   else if(v===2||v===6){for(const d of(v===2?KN_:KG_)){const x=f+d[0],y=r+d[1];if(x>=0&&x<8&&y>=0&&y<8){const tv=b[y*8+x]*us;if(tv<=0)o.push({f:s,t:y*8+x,p:v,c:-tv,pr:0,fl:0})}}if(v===6)this.castling(o,s)}
+   else{if(v!==4)this.slide(o,s,DG_,us,v);if(v!==3)this.slide(o,s,OR_,us,v)}}
+  return o}
+ slide(o,s,dirs,us,p){for(const d of dirs){let x=(s&7)+d[0],y=(s>>3)+d[1];while(x>=0&&x<8&&y>=0&&y<8){const tv=this.b[y*8+x]*us;if(tv<=0)o.push({f:s,t:y*8+x,p,c:-tv,pr:0,fl:0});if(tv!==0)break;x+=d[0];y+=d[1]}}}
+ castling(o,s){const b=this.b,base=this.w?0:56;if(s!==base+4||this.att(s,!this.w))return;const ks=this.w?1:4,qs=this.w?2:8;
+  if((this.cs&ks)&&b[base+5]===0&&b[base+6]===0&&!this.att(base+5,!this.w)&&!this.att(base+6,!this.w))o.push({f:s,t:base+6,p:6,c:0,pr:0,fl:2});
+  if((this.cs&qs)&&b[base+3]===0&&b[base+2]===0&&b[base+1]===0&&!this.att(base+3,!this.w)&&!this.att(base+2,!this.w))o.push({f:s,t:base+2,p:6,c:0,pr:0,fl:2})}
+ make(m){const b=this.b,u={m,cs:this.cs,ep:this.ep,half:this.half,full:this.full,cv:b[m.t],mv:b[m.f],k0:this.ks[0],k1:this.ks[1]};this.st.push(u);const us=this.w?1:-1;
+  b[m.t]=m.pr?us*m.pr:b[m.f];b[m.f]=0;
+  if(m.fl===1)b[this.w?m.t-8:m.t+8]=0;
+  if(m.fl===2){if(m.t>m.f){b[m.f+1]=b[m.f+3];b[m.f+3]=0}else{b[m.f-1]=b[m.f-4];b[m.f-4]=0}}
+  if(m.p===6)this.ks[this.w?0:1]=m.t;
+  this.ep=(m.p===1&&(m.t-m.f===16||m.f-m.t===16))?(m.f+m.t)>>1:-1;
+  this.cs&=~(CR_[m.f]||0)&~(CR_[m.t]||0);this.half=(m.p===1||m.c)?0:this.half+1;if(!this.w)this.full++;this.w=!this.w}
+ unmake(){const u=this.st.pop(),m=u.m,b=this.b;this.w=!this.w;const us=this.w?1:-1;b[m.f]=u.mv;b[m.t]=u.cv;
+  if(m.fl===1)b[this.w?m.t-8:m.t+8]=-us;
+  if(m.fl===2){if(m.t>m.f){b[m.f+3]=b[m.f+1];b[m.f+1]=0}else{b[m.f-4]=b[m.f-1];b[m.f-1]=0}}
+  this.cs=u.cs;this.ep=u.ep;this.half=u.half;this.full=u.full;this.ks[0]=u.k0;this.ks[1]=u.k1}
+ gen(){const o=[];for(const m of this.pseudo()){this.make(m);const bad=this.att(this.ks[this.w?1:0],this.w);this.unmake();if(!bad)o.push(m)}return o}
+ vm(m){return{from:SQN[m.f],to:SQN[m.t],piece:PCH_[m.p-1],color:this.w?'w':'b',captured:m.c?PCH_[m.c-1]:undefined,promotion:m.pr?PCH_[m.pr-1]:undefined}}
+ san(m,L){let s;
+  if(m.fl===2)s=m.t>m.f?'O-O':'O-O-O';
+  else{s='';const cap=m.c>0;
+   if(m.p===1){if(cap)s+=SQN[m.f][0]}
+   else{s+='?PNBRQK'[m.p];L=L||this.gen();let amb=0,sf=0,sr=0;
+    for(const q of L)if(q.t===m.t&&q.f!==m.f&&q.p===m.p){amb=1;if((q.f&7)===(m.f&7))sf=1;if((q.f>>3)===(m.f>>3))sr=1}
+    if(amb){const n=SQN[m.f];s+=!sf?n[0]:!sr?n[1]:n}}
+   if(cap)s+='x';s+=SQN[m.t];if(m.pr)s+='='+'?PNBRQK'[m.pr]}
+  this.make(m);if(this.inCheck())s+=this.gen().length?'+':'#';this.unmake();return s}
+ turn(){return this.w?'w':'b'}
+ get(sq){const v=this.b[sqi(sq)];return v?{type:PCH_[Math.abs(v)-1],color:v>0?'w':'b'}:null}
+ board(){const o=[];for(let r=7;r>=0;r--){const row=[];for(let f=0;f<8;f++){const v=this.b[r*8+f];row.push(v?{type:PCH_[Math.abs(v)-1],color:v>0?'w':'b'}:null)}o.push(row)}return o}
+ moves(opt){let L=this.gen();if(opt&&opt.square){const s=sqi(opt.square);L=L.filter(m=>m.f===s)}return opt&&opt.verbose?L.map(m=>this.vm(m)):L.map(m=>this.san(m))}
+ move(x){const L=this.gen();let m=null;
+  if(typeof x==='string')m=L.find(q=>this.san(q,L).replace(/[+#]/,'')===x.replace(/[+#]/,''));
+  else if(x){const f=sqi(x.from),t=sqi(x.to),pr=x.promotion?PCH_.indexOf(x.promotion)+1:5;m=L.find(q=>q.f===f&&q.t===t&&(!q.pr||q.pr===pr))}
+  if(!m)return null;const san=this.san(m,L),v=this.vm(m);v.san=san;this.make(m);this.keys.push(this.key());this.sans.push(san);return v}
+ undo(){if(!this.st.length)return null;const m=this.st[this.st.length-1].m,v={from:SQN[m.f],to:SQN[m.t]};this.unmake();this.keys.pop();this.sans.pop();return v}
+ history(opt){return opt&&opt.verbose?this.st.map((u,i)=>({from:SQN[u.m.f],to:SQN[u.m.t],san:this.sans[i]})):this.sans.slice()}
+ fen(){let s='';for(let r=7;r>=0;r--){let e=0;for(let f=0;f<8;f++){const v=this.b[r*8+f];if(!v)e++;else{if(e){s+=e;e=0}const c=PCH_[Math.abs(v)-1];s+=v>0?c.toUpperCase():c}}if(e)s+=e;if(r)s+='/'}
+  return s+' '+(this.w?'w':'b')+' '+(((this.cs&1?'K':'')+(this.cs&2?'Q':'')+(this.cs&4?'k':'')+(this.cs&8?'q':''))||'-')+' '+(this.epv()?SQN[this.ep]:'-')+' '+this.half+' '+this.full}
+ in_check(){return this.inCheck()}
+ in_checkmate(){return this.inCheck()&&this.gen().length===0}
+ in_stalemate(){return !this.inCheck()&&this.gen().length===0}
+ insufficient_material(){let n=0;for(const v of this.b){const a=Math.abs(v);if(a===1||a===4||a===5)return false;if(a===2||a===3)n++}return n<=1}
+ in_threefold_repetition(){const k=this.keys[this.keys.length-1];let c=0;for(const x of this.keys)if(x===k)c++;return c>=3}
+ in_draw(){return this.half>=100||this.in_stalemate()||this.insufficient_material()||this.in_threefold_repetition()}
+ game_over(){return this.in_draw()||this.in_checkmate()}
+}
+/* ENGINE-END */
+</script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--s1:#0b2a52;--s2:#02060f;--c1:#10294d;--c2:#081a35;--ink:#e6f2ff;--mu:#8fb2d9;--gold:#58b4ff;--red:#c4302a;--lt:#8fa9cc;--dk:#1f3d66;--wp:#fff6df;--bp:#0b0f1a;color-scheme:dark}
+@media (prefers-color-scheme:light){:root:not([data-theme="midnight"]){--s1:#2d6aa8;--s2:#0f2c52;--c1:#18407a;--c2:#0e2a55;--lt:#a7bfdc;--dk:#2c527f}}
+:root[data-theme="dusk"]{--s1:#2d6aa8;--s2:#0f2c52;--c1:#18407a;--c2:#0e2a55;--lt:#a7bfdc;--dk:#2c527f}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;color:var(--ink);font:16px/1.4 "IM Fell English",Georgia,serif;min-height:100vh;overflow-x:hidden;background:radial-gradient(ellipse at 50% 0,var(--s1),var(--s2) 70%) fixed,var(--s2)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.18;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='30'><path d='M0 15Q15 0 30 15T60 15' fill='none' stroke='white' stroke-width='1.5'/></svg>")}
+body>*{position:relative;z-index:1}
+h1,h2,h3,.pn{font-family:"Pirata One","Cinzel",serif;font-weight:400}
+.cz{font-family:"Cinzel",serif;font-weight:600}
+.bunt{height:26px;background:linear-gradient(135deg,var(--red) 25%,transparent 25%) -14px 0,linear-gradient(225deg,var(--gold) 25%,transparent 25%) -14px 0,linear-gradient(315deg,var(--red) 25%,transparent 25%),linear-gradient(45deg,var(--gold) 25%,transparent 25%);background-size:28px 28px;border-bottom:3px solid var(--gold)}
+.tk{overflow:hidden;white-space:nowrap;background:linear-gradient(#0d3a73,#06162e);color:#cfe6ff;border-block:3px double var(--gold);font:600 14px "Cinzel",serif;padding:5px 0;letter-spacing:.08em}
+.tk div{display:inline-block;animation:mq 60s linear infinite}@keyframes mq{to{transform:translateX(-50%)}}
+header{position:relative;overflow:hidden;text-align:center;padding:40px 16px 100px;max-width:1160px;margin:0 auto}
+.ttl h1{font-size:clamp(46px,10vw,104px);line-height:.95;margin:0;background:linear-gradient(#e8f6ff,var(--gold) 55%,#2b5f9e);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 3px 0 #000000) drop-shadow(0 0 14px rgba(224,177,58,.45))}
+.ttl p{margin:6px 0 0;font:italic 20px "IM Fell English",serif;color:#cfe6ff;text-shadow:0 2px 4px #000}
+.orn{font-size:22px;letter-spacing:.5em;color:var(--gold);margin-top:6px}
+.rose{position:absolute;width:150px;top:8px;left:2%;color:var(--gold);opacity:.55;animation:spin 90s linear infinite}.rose.r2{left:auto;right:2%;animation-direction:reverse}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ship{position:absolute;width:240px;bottom:4px;left:-270px;animation:sail 34s linear infinite,bob 3s ease-in-out infinite}
+@keyframes sail{to{left:105%}}@keyframes bob{50%{translate:0 -6px}}
+.wave{position:absolute;left:0;bottom:-2px;width:200%;height:42px;animation:wv 9s linear infinite}.wave.w2{bottom:-12px;opacity:.6;animation-duration:14s;animation-direction:reverse}
+@keyframes wv{to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+nav{display:flex;flex-wrap:wrap;gap:12px;max-width:1160px;margin:0 auto;padding:0 16px}
+nav a{flex:1 1 150px;text-align:center;text-decoration:none;color:#e6f2ff;font:800 15px "Cinzel",serif;letter-spacing:.1em;padding:11px 8px;border-radius:8px;border:3px solid #1d4a80;background:linear-gradient(#1d4f8a,#0c2a52 55%,#133e75);box-shadow:inset 0 0 0 2px #fff6,0 4px 0 #1d4a80,0 8px 14px #0007}
+nav a.on{background:linear-gradient(#8a1712,#c4302a);color:#dff1ff;transform:translateY(3px);box-shadow:inset 0 0 0 2px #ffd36a88,0 1px 0 #1d4a80}
+a:focus-visible,button:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.pg{display:flex;flex-wrap:wrap;gap:28px;justify-content:center;align-items:flex-start;max-width:1160px;margin:0 auto;padding:30px 16px 36px}
+.card{position:relative;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),radial-gradient(circle at 20% 15%,#58b4ff22,transparent 40%),radial-gradient(circle at 85% 90%,#00000055,transparent 45%),linear-gradient(var(--c1),var(--c2));border:5px double #2b5f9e;border-radius:10px;padding:18px 14px 14px;box-shadow:inset 0 0 40px #00000099,0 0 0 3px #050b16,0 12px 24px #0009}
+.card::before,.card::after{content:"❦";position:absolute;color:#2b5f9e;font-size:20px;line-height:1}.card::before{top:3px;left:6px}.card::after{bottom:3px;right:6px;transform:rotate(180deg)}
+.card h2,.card h3{margin:-18px -14px 12px;padding:8px 14px;font-size:26px;text-align:center;color:#dff1ff;background:linear-gradient(#0a2a55,#1b5aa5 50%,#08204a);border-radius:6px 6px 0 0;text-shadow:0 2px 0 #000000;border-bottom:3px solid var(--gold)}
+.hd{width:100%;text-align:center;margin:0}.hd h2{font-size:clamp(36px,7vw,66px);margin:0;color:#dff1ff;text-shadow:0 3px 0 #000000,0 0 18px #58b4ff88}.hd p{margin:0;font-style:italic;font-size:19px;color:#cfe6ff}
+.play{--s:min(10.2vw,62px);width:max-content;max-width:100%}
+.pl{display:flex;align-items:center;gap:10px;background:linear-gradient(#10294d,#050b16);color:#cfe6ff;padding:7px 10px;border:4px double var(--gold);border-radius:8px}
+.pl b{font:400 22px "Pirata One",serif;white-space:nowrap}.pl small{display:block;font:italic 13px "IM Fell English";opacity:.85;line-height:1}
+.pl .em{font-size:30px;line-height:1}
+.cp{flex:1;font-size:17px;letter-spacing:-2px;white-space:nowrap;overflow:hidden;min-width:0;text-shadow:0 1px 0 #000}.cp em{font:700 13px "Cinzel";letter-spacing:0;margin-left:6px;color:var(--gold)}
+.clk{font:800 21px "Cinzel",serif;background:#cfe6ff;color:#050b16;padding:1px 9px;min-width:88px;text-align:center;border-radius:5px;border:2px solid #2b5f9e}.clk.act{background:var(--red);color:#dff1ff;border-color:var(--gold)}
+.bw{display:flex;margin:12px 0}
+#ev{width:22px;border:4px solid #2b5f9e;border-right:0;border-radius:8px 0 0 8px;position:relative;flex:none;overflow:hidden}#ev i{position:absolute;left:0;right:0}
+#board{display:grid;grid-template-columns:repeat(8,var(--s));border:8px solid transparent;border-image:linear-gradient(135deg,#8fc8ff,#2b5f9e,#8fc8ff,#1d4a80) 1;box-shadow:0 0 0 3px #050b16,0 14px 30px #000a,0 0 30px #58b4ff55;touch-action:manipulation;user-select:none}
+.sq{width:var(--s);height:var(--s);position:relative;display:flex;align-items:center;justify-content:center;font-size:calc(var(--s)*.82);line-height:1;cursor:pointer}
+.lt{background:linear-gradient(135deg,var(--lt),#58b4ff22 60%,var(--lt))}.dk{background:linear-gradient(135deg,var(--dk),#0004)}
+.last::before,.chk::before{content:"";position:absolute;inset:0;background:rgba(224,177,58,.55)}
+.chk::before{background:radial-gradient(circle,#ff3b2f 20%,#a81f1a88 55%,transparent 78%);opacity:.95}
+.sel{box-shadow:inset 0 0 0 4px var(--gold)}
+.tg::after{content:"";position:absolute;width:26%;height:26%;border-radius:50%;background:radial-gradient(#dff1ff,#58b4ff);box-shadow:0 0 8px #58b4ff;opacity:.9}
+.tg.oc::after{width:90%;height:90%;background:none;border:4px solid #a81f1a;box-shadow:inset 0 0 8px #a81f1a}
+.co{position:absolute;font:800 10px/1 "Cinzel",serif;font-style:normal;opacity:.7;color:#050b16}.dk .co{color:#cfe6ff}.co.f{right:3px;bottom:2px}.co.r{left:3px;top:3px}
+.pc{position:relative;z-index:1;-webkit-text-stroke:2px #050b16;paint-order:stroke fill;filter:drop-shadow(1px 3px 2px rgba(0,0,0,.55))}.pc.w{color:var(--wp)}.pc.b{color:var(--bp);-webkit-text-stroke:2px #58b4ff}
+aside{width:min(100%,400px);display:flex;flex-direction:column;gap:30px}
+.lab{font:800 13px "Cinzel",serif;letter-spacing:.08em;margin:4px 0 6px;color:var(--mu)}
+.seg{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+button{font:800 13px "Cinzel",serif;letter-spacing:.04em;color:var(--ink);background:linear-gradient(#1a3b6b,#0d2447);border:3px solid #1d4a80;border-radius:7px;padding:7px 11px;cursor:pointer;box-shadow:0 3px 0 #0a1d38,0 6px 10px #0005}
+button:active{transform:translateY(3px);box-shadow:0 0 0 #0a1d38}button.on{background:linear-gradient(#050b16,#10294d);color:var(--gold);border-color:var(--gold)}
+button.go{background:linear-gradient(#c4302a,#7d1a14);color:#dff1ff;font:400 24px "Pirata One",serif;letter-spacing:.04em;width:100%;padding:8px;border-color:var(--gold)}
+button:disabled{opacity:.55;cursor:not-allowed}
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#turn{font:400 26px "Pirata One",serif;margin:0 0 4px}#msg{margin:0 0 10px;min-height:20px;color:var(--mu);font-style:italic}
+.mv{display:grid;grid-template-columns:34px 1fr 1fr;max-height:200px;overflow:auto;font:600 14px "Cinzel",serif;border:3px double #2b5f9e;background:#0006;border-radius:6px}
+.mv span{padding:2px 8px;border-bottom:1px dotted var(--mu)}.mv .n{background:#050b16;color:var(--gold)}.mv .e{grid-column:1/-1;font:italic 15px "IM Fell English";border:0}
+.opp{text-align:center}.opp .pt{font-size:74px;line-height:1.1;width:110px;height:110px;margin:0 auto 6px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(#10294d,#120a05);border:5px solid var(--t,#58b4ff);box-shadow:0 0 0 3px #050b16,0 0 22px var(--t,#58b4ff)}
+.opp h3{background:none;border:0;color:#7cc4ff;text-shadow:none;margin:0;padding:0;font-size:32px}.opp .tt{font-style:italic;color:var(--mu)}
+.bub{margin-top:10px;padding:8px 12px;border:2px solid #2b5f9e;border-radius:12px;background:#0005;font-style:italic}
+.thr{height:12px;border:2px solid #1d4a80;border-radius:7px;background:#050b16;overflow:hidden;margin:8px 0 2px}.thr i{display:block;height:100%;background:linear-gradient(90deg,#58b4ff,#c4302a)}
+.grid{width:100%;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:30px}
+.fc{text-align:center;padding-top:26px}.fc .pt{font-size:56px}.fc.lock{filter:saturate(.35) brightness(.8)}
+.fc .no{position:absolute;top:-14px;left:-10px;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--t);color:#050b16;font:400 22px "Pirata One";border:3px solid #050b16;box-shadow:0 3px 6px #0008}
+.fc .bdw{position:absolute;top:-22px;right:-14px;transform:scale(.55);transform-origin:top right}
+.fc p{margin:6px 0;font-style:italic;font-size:15px}
+.prog{width:100%;max-width:640px;margin:0 auto}.rope{height:22px;border:3px solid #050b16;border-radius:12px;overflow:hidden;background:#050b16}
+.rope i{display:block;height:100%;background:repeating-linear-gradient(60deg,#0d2447 0 8px,#1f5fa8 8px 16px);transition:width .5s}
+.bd{width:92px;height:92px;border-radius:50%;background:conic-gradient(var(--t),#fffa,var(--t),#0007,var(--t));padding:7px;display:grid;place-items:center;position:relative;box-shadow:0 0 0 3px #050b16,0 8px 14px #0008}
+.bd i{font-style:normal;width:100%;height:100%;border-radius:50%;background:radial-gradient(circle,#10294d,#120a05);display:grid;place-items:center;font-size:40px;border:3px solid var(--t)}
+.bd b{position:absolute;bottom:-6px;right:-4px;background:var(--red);color:#dff1ff;border-radius:50%;width:28px;height:28px;display:grid;place-items:center;font:400 16px "Pirata One";border:2px solid #cfe6ff}
+.bd.off{filter:grayscale(1) brightness(.4)}.bd.off i{opacity:.3}
+.bt{text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:22px}.bt span{font:800 12px "Cinzel";letter-spacing:.05em}.bt small{display:block;font:italic 13px "IM Fell English"}
+.gl{font-size:58px;line-height:1;float:right;margin:0 0 6px 10px;color:var(--wp);-webkit-text-stroke:2px #050b16;paint-order:stroke fill}.card .nm{font:400 28px "Pirata One";color:#7cc4ff}
+.card ul{margin:0;padding-left:20px}.card li{margin:6px 0}
+footer{max-width:1160px;margin:0 auto;padding:6px 16px 18px;font-style:italic;color:#cfe6ff;text-align:center;text-shadow:0 1px 2px #000}
+#over{position:fixed;inset:0;background:rgba(2,8,14,.8);display:none;align-items:center;justify-content:center;z-index:20;padding:16px;overflow:auto}#over.show{display:flex}
+.stamp{max-width:480px;text-align:center}.stamp h3{margin:-18px -14px 14px;font-size:56px}.stamp p{margin:0 0 14px}.stamp .bdw{display:flex;justify-content:center;margin:0 0 20px}.stamp button{margin:4px}
+.duel{display:flex;justify-content:space-between;gap:12px;margin:12px 0 0;padding:6px 12px 8px;border:4px double var(--gold);border-radius:8px;background:linear-gradient(#123d73,#06162e);overflow:hidden}
+.sd{width:46%}.sd svg{width:100%;max-height:96px;display:block;transition:transform .8s,opacity .8s}.sd.r svg{transform:scaleX(-1)}
+.sd.r svg.fl{transform:none}.sd.r .sink svg.fl{transform:translateY(46px) rotate(20deg)}
+.bd i svg{width:86%}.bd .cw{position:absolute;top:-6px;left:-6px;width:28px;height:28px;border-radius:50%;background:#050b16;border:2px solid var(--t);display:grid;place-items:center;font-size:15px}
+.promo{margin:10px 0 14px;padding:10px;border:3px double var(--gold);border-radius:8px;background:#0007}.promo svg{max-width:150px;display:block;margin:4px auto}
+.offc .shp{filter:grayscale(1) brightness(.35)}.ht{font:400 34px "Pirata One",serif;margin:6px 0 0;color:#cfe6ff}.bt .shp{width:100%}
+.hl{height:10px;border:2px solid #cfe6ff;border-radius:6px;background:#050b16;margin-top:3px;overflow:hidden}.hl i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#c4302a,#58b4ff,#6fcf6f);background-size:100vw 100%;transition:width .5s}
+.fire svg{animation:shake .5s}@keyframes shake{25%{translate:-6px 0;filter:brightness(2.2)}75%{translate:6px 0}}
+.sink svg{transform:translateY(46px) rotate(20deg);opacity:.15}.sd.r .sink svg{transform:scaleX(-1) translateY(46px) rotate(20deg)}
+.shp svg{width:100%;max-width:290px;height:auto;display:block;margin:4px auto}.shp.sm svg{max-width:120px}
+.anch{position:absolute;bottom:-15px;left:50%;translate:-50% 0;background:var(--gold);color:#050b16;font:800 11px "Cinzel";padding:3px 10px;border-radius:12px;border:2px solid #050b16;white-space:nowrap;z-index:2}
+.hscene{position:absolute;inset:0;width:100%;height:100%;z-index:-1}
+.opp .pt,.fc .pt{width:118px;height:auto;border:0;background:none;box-shadow:none;border-radius:0;font-size:0;display:block;margin:0 auto 6px}.psv{width:100%;display:block;filter:drop-shadow(0 6px 8px #000a)}
+.bdg{width:118px;position:relative}.bdg svg{display:block;width:100%;filter:drop-shadow(0 8px 10px #000a)}.bdg.off{filter:grayscale(1) brightness(.38)}.stamp .bdg{width:170px}.fc .bdw .bdg{width:118px}
+#err{position:fixed;left:12px;right:12px;bottom:12px;z-index:50;background:#7a1510;color:#fff;border:3px solid #fff;border-radius:8px;padding:12px 14px;font:600 14px/1.4 system-ui,sans-serif}.nojs{padding:20px;text-align:center;color:#fff;background:#7a1510;font:600 16px system-ui,sans-serif}
+</style>
+</head>
+<body>
+<div id="err" role="alert" hidden></div>
+<noscript><div class="nojs">Caribbean Gambit needs JavaScript. Please enable it to sail.</div></noscript>
+<div class="bunt"></div>
+<div class="tk"><div id="tk"></div></div>
+<header>
+  <svg class="hscene" viewBox="0 0 1200 320" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg><svg class="rose" viewBox="0 0 200 200" aria-hidden="true"></svg><svg class="rose r2" viewBox="0 0 200 200" aria-hidden="true"></svg>
+  <div class="ttl"><h1>Caribbean Gambit</h1><p>Twenty captains. Twenty badges. One board.</p><div class="orn" aria-hidden="true">⚓ ✦ ☠ ✦ ⚓</div></div>
+  <div class="ship" id="hship"></div>
+  </header>
+<nav aria-label="Pages"><a id="n-fleet" href="#/fleet">THE FLEET</a><a id="n-play" href="#/play">QUARTERDECK</a><a id="n-treasury" href="#/treasury">TREASURY</a><a id="n-articles" href="#/articles">SHIP’S ARTICLES</a></nav>
+
+<section class="pg" id="p-fleet">
+  <div class="hd"><h2>Choose Your Captain</h2><p>Beat each one in turn to unlock the next and win their badge.</p></div>
+  <div class="card prog"><div class="shp" id="myS"></div><div class="lab" id="fp"></div><div class="rope"><i id="fb"></i></div>
+    <div class="acts" style="margin-top:12px"><button id="bAll">Chart all seas (unlock everyone)</button><button id="bReset">Burn the logbook (reset)</button></div></div>
+  <div class="grid" id="fl"></div>
+</section>
+
+<main class="pg" id="p-play" hidden>
+  <section class="play" aria-label="Game">
+    <div class="pl" id="pt"><span class="em"></span><div><b></b><small></small></div><div class="cp"></div><div class="clk"></div></div>
+    <div class="duel"><div class="sd"><div id="sY"></div><div class="hl"><i id="hY"></i></div></div><div class="sd r"><div id="sE"></div><div class="hl"><i id="hE"></i></div></div></div>
+    <div class="bw"><div id="ev"><i></i></div><div id="board" role="grid" aria-label="Chess board"></div></div>
+    <div class="pl" id="pb"><span class="em">🏴‍☠️</span><div><b></b><small></small></div><div class="cp"></div><div class="clk"></div></div>
+  </section>
+  <aside>
+    <div class="card opp"><h2>Your Opponent</h2><div class="pt" id="oPt"></div><h3 id="oN"></h3><div class="tt" id="oT"></div><div class="thr"><i id="oTh"></i></div><div class="lab" id="oL"></div><div class="bub" id="oB"></div></div>
+    <div class="card"><h2>The Battle</h2>
+      <p id="turn"></p><p id="msg"></p><div class="mv" id="mv"></div>
+      <div class="acts" style="margin-top:14px"><button id="bUndo">Takeback</button><button id="bFlip">Flip board</button><button id="bDraw">Offer parley</button><button id="bRes">Strike colours</button></div>
+    </div>
+    <div class="card"><h2>Terms of Battle</h2>
+      <div class="lab">YOUR COLOUR</div><div class="seg" id="sSide"></div><div class="lab">TIME ON THE GLASS</div><div class="seg" id="sTc"></div>
+      <div class="acts"><button class="go" id="go">New battle</button><button id="bFl">To the fleet</button></div>
+      <button id="bTh" style="margin-top:10px;width:100%">Midnight / Dusk</button></div>
+  </aside>
+</main>
+
+<section class="pg" id="p-treasury" hidden>
+  <div class="hd"><h2>The Treasury</h2><p id="tc"></p></div><div class="hd"><h3 class="ht">Rank ladder: your ship is your rank</h3></div><div class="grid" id="ld"></div><div class="hd"><h3 class="ht">Captain badges</h3></div><div class="grid" id="tb"></div>
+</section>
+
+<section class="pg" id="p-articles" hidden>
+  <div class="hd"><h2>Ship’s Articles</h2><p>The code of the board. More guidelines than rules.</p></div>
+  <div class="grid" id="ar"></div>
+  <div class="card" style="width:100%"><h3>Special Orders</h3><ul>
+    <li><b>Castling</b>: the captain slides two squares toward a rook, which hops over him. Neither may have moved, and no crossing a square under fire.</li>
+    <li><b>En passant</b>: a deckhand that just leapt two squares may be taken as if it had stepped one.</li>
+    <li><b>Promotion</b>: a deckhand reaching the far shore is made a flagship (queen).</li>
+    <li><b>Parley</b>: stalemate, repetition, fifty quiet moves or too few pieces ends the fight in a draw.</li></ul></div>
+</section>
+
+<div class="tk"><div id="tk2"></div></div><div class="bunt"></div>
+<footer>A fan-made tribute with original artwork. Not affiliated with or endorsed by Disney or the makers of the films.</footer>
+<div id="over" role="dialog" aria-modal="true"><div class="card stamp"><h3 id="oh"></h3><p id="os"></p><div class="bdw" id="ob"></div><div id="op"></div><div id="obt"></div></div></div>
+<script>
+const g=new Chess(),$=s=>document.querySelector(s);
+const GL={p:'\u265F\uFE0E',n:'\u265E',b:'\u265D',r:'\u265C',q:'\u265B',k:'\u265A'},V={p:100,n:320,b:330,r:500,q:900,k:0};
+const OPP=[
+['Joshamee Gibbs','Quartermaster of the Pearl','🍺','Steady hands and a steadier flask. Go gently with an old sailor.','First Anchor'],
+['Weatherby Swann','Governor of Port Royal','🎩','Order, rank and a well-guarded back row.','Governor’s Seal'],
+['Henry Turner','Seeker of the Trident','🗺️','I came to break a curse. A game first, then.','Mapmaker’s Oath'],
+['Syrena','Mermaid of the Lagoon','🧜‍♀️','The deep keeps its secrets. I keep my pieces closer.','Siren’s Tear'],
+['Mistress Ching','Pirate Lord of the South China Sea','🐉','A thousand ships answer to my fleet of pieces.','Dragon of the South Seas'],
+['Captain Teague','Keeper of the Code','🎸','The Code is the Code, and the clock is the clock.','Code Keeper'],
+['Elizabeth Swann','Pirate King','👑','The Brethren voted me King. Try and vote me down.','Pirate King’s Crown'],
+['Angelica Teach','Daughter of Blackbeard','🌹','Charm, a blade and a long memory. Choose your poison.','Rose Blade'],
+['Juan Ponce de León','Explorer of the Fountain of Youth','🏺','Centuries I have sought one fountain. I can spare a few moves for you.','Fountain’s Chalice'],
+['Sao Feng','Pirate Lord of Singapore','🏮','Everything has a price on my island, even the centre.','Lantern of Singapore'],
+['James Norrington','Commodore, Royal Navy','🎖️','Disciplined, proper and ruthlessly precise.','Commodore’s Medal'],
+['Will Turner','Captain of the Flying Dutchman','❤️','I have sworn to ferry the dead. Do not join them.','Heart of the Dutchman'],
+['Armando Salazar','Terror of the Silent Mary','💀','No pirate has ever escaped my pursuit. Not one.','Shroud of the Silent Mary'],
+['Tia Dalma','Sea Witch of the Bayou','🔮','The pieces tell me how this ends. You will not enjoy it.','Sea Witch’s Charm'],
+['Hector Barbossa','Pirate Lord, Master of Cunning','🍎','Patience, mate. I have outlasted far better opening theory.','Cursed Apple'],
+['Edward “Blackbeard” Teach','Captain of the Queen Anne’s Revenge','🔥','Fear is a strategy. Smoke first, mate after.','Beard of Smoke'],
+['Lord Cutler Beckett','Chairman of the Trading Company','💰','Every board is a market. I intend to own it.','Company Ledger'],
+['Jack Sparrow','Captain of the Black Pearl','🧭','Never a plan, always an escape. Savour the confusion.','Compass of Desire'],
+['Davy Jones','Master of the Flying Dutchman','🐙','The depths keep everything that sinks. Starting with you.','Kraken’s Eye'],
+['Calypso','Goddess of the Sea','🔱','I am the tide itself. You may borrow a square for a while.','Trident of the Tide']];
+const DD=[1,1,1,2,2,2,2,2,3,3,3,3,3,3,3,4,4,4,4,5],ZZ=[320,280,240,210,180,150,120,100,80,60,45,35,25,15,10,5,0,0,0,0];
+OPP.forEach((o,i)=>{o.n=o[0];o.ti=o[1];o.ic=o[2];o.ta=o[3];o.bn=o[4];o.d=DD[i];o.z=ZZ[i];o.t=1200+i*170});
+const TC=[['1+0',60,0],['3+2',180,2],['5+0',300,0],['10+0',600,0],['15+10',900,10],['∞',0,0]];
+const cfg={side:'w',tc:2};let cur=0,human='w',flip=false,sel=null,tg=[],last=null,busy=false,over=true,clk={w:0,b:0},inc=0,lastT=Date.now(),S={beat:Array(20).fill(0),all:0,w:0,d:0,l:0};
+try{const s=JSON.parse(localStorage.getItem('caribbean')||'null');if(s)S=Object.assign(S,s)}catch(e){}
+const save=()=>{try{localStorage.setItem('caribbean',JSON.stringify(S))}catch(e){}};
+const open_=i=>i===0||S.beat[i-1]||S.all;
+const badge=(i,on)=>`<div class="bdg${on?'':' off'}" style="--t:${BC[bandOf(i)]}">${badgeSvg(i)}</div>`;
+const SL=['PLAN? WHAT PLAN','DEAD MEN PLAY NO SECOND GAMES','THE CENTRE IS THE TREASURE','A KING IN CHECK IS A SHIP TAKING WATER','CASTLE BEFORE THE STORM','FORTUNE FAVOURS THE PATIENT PAWN'];
+$('#tk').innerHTML=$('#tk2').innerHTML=(SL.join(' &nbsp;⚓&nbsp; ')+' &nbsp;⚓&nbsp; ').repeat(2);
+const R_=a=>{const x=Math.sin(a*127.1+311.7)*43758.5453;return x-Math.floor(x)};
+const DEFS=`<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="shV" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".2"/><stop offset=".4" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".62"/></linearGradient>
+<linearGradient id="shH" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#000" stop-opacity=".38"/><stop offset=".45" stop-color="#fff" stop-opacity=".2"/><stop offset="1" stop-color="#000" stop-opacity=".42"/></linearGradient>
+<linearGradient id="mastG" x1="0" x2="1"><stop offset="0" stop-color="#1e120a"/><stop offset=".5" stop-color="#9a6e40"/><stop offset="1" stop-color="#1e120a"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4faff"/><stop offset=".22" stop-color="#7d9fc9"/><stop offset=".5" stop-color="#1b3354"/><stop offset=".78" stop-color="#b4d0f2"/><stop offset="1" stop-color="#2b4f7c"/></linearGradient>
+<linearGradient id="sky2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#010409"/><stop offset=".6" stop-color="#0a2347"/><stop offset="1" stop-color="#1f5f9f"/></linearGradient>
+<radialGradient id="sky" cx=".5" cy=".3" r=".85"><stop offset="0" stop-color="#2a6cb8"/><stop offset=".55" stop-color="#0a2347"/><stop offset="1" stop-color="#010409"/></radialGradient>
+<radialGradient id="moonG" cx=".4" cy=".4"><stop offset="0" stop-color="#fff"/><stop offset=".7" stop-color="#e3f0ff"/><stop offset="1" stop-color="#a9c9f0"/></radialGradient>
+<radialGradient id="halo"><stop offset="0" stop-color="#bfe0ff" stop-opacity=".75"/><stop offset="1" stop-color="#bfe0ff" stop-opacity="0"/></radialGradient>
+<linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d5d9e"/><stop offset="1" stop-color="#020b17"/></linearGradient>
+<clipPath id="bc"><circle cx="100" cy="100" r="71"/></clipPath><clipPath id="hc"><path d="M20 100H84V120H236V110H262L300 90L312 94L276 164Q250 196 196 198H78Q36 190 22 150Z"/></clipPath>
+<filter id="wood" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".012 .4" numOctaves="3" seed="4"/><feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.3 -.35"/></filter>
+<filter id="cloth" x="-8%" y="-8%" width="116%" height="116%"><feTurbulence type="fractalNoise" baseFrequency=".045 .03" numOctaves="2" seed="2" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="5"/></filter>
+<filter id="blur6"><feGaussianBlur stdDeviation="6"/></filter><filter id="blur2"><feGaussianBlur stdDeviation="2"/></filter>
+<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<linearGradient id="seaF" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d5d9e"/><stop offset=".6" stop-color="#06203f"/><stop offset="1" stop-color="#020b17" stop-opacity="0"/></linearGradient><linearGradient id="fx"><stop offset="0" stop-color="#000"/><stop offset=".14" stop-color="#fff"/><stop offset=".86" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient><mask id="fadeX" maskUnits="userSpaceOnUse" x="-30" y="140" width="400" height="100"><rect x="-30" y="140" width="400" height="100" fill="url(#fx)"/></mask><radialGradient id="vig"><stop offset=".55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".7"/></radialGradient><radialGradient id="cam" cx=".5" cy=".4"><stop offset="0" stop-color="#245b9c"/><stop offset=".6" stop-color="#0a2347"/><stop offset="1" stop-color="#02060f"/></radialGradient>
+</defs></svg>`;
+const SP={
+wench:{n:2,h:'#6a4a2b',t:'#c9a36a',s:'#e8d8ae',gp:1,f:'plain',z:.8,patch:1},
+interceptor:{n:2,h:'#1b3a66',t:'#d9ecff',s:'#f4f7ff',gp:1,f:'navy',z:.86},
+providence:{n:3,h:'#243c68',t:'#c4302a',s:'#edf1f8',gp:1,f:'navy',z:.92},
+dauntless:{n:3,h:'#1b2e50',t:'#8fb0e0',s:'#e8edf6',gp:2,f:'navy',z:.98},
+endeavour:{n:3,h:'#10151f',t:'#c4302a',s:'#dfe6f2',gp:3,f:'navy',z:1.02},
+qar:{n:3,h:'#14141c',t:'#7f9bbd',s:'#363b4e',gp:2,f:'jolly',z:1.02,tat:1},
+mary:{n:3,h:'#3b4a52',t:'#9fe8ff',s:'#b4c6cc',gp:1,f:'ghost',z:1,tat:1,ghost:1},
+pearl:{n:3,h:'#0a0a12',t:'#7fb4ff',s:'#171826',gp:2,f:'jolly',z:1.04,rim:1},
+dutchman:{n:3,h:'#1f4a45',t:'#9fffe0',s:'#69b8aa',gp:2,f:'ghost',z:1.06,tat:1,ghost:1,barn:1}};
+const waveD=(y,a,st,x0=-20,x1=360)=>{let d=`M${x0} ${y}`,x=x0,up=1;while(x<x1){d+=` Q${x+st/2} ${y-a*up} ${x+st} ${y}`;x+=st;up=-up}return d};
+function flagG(t,x,y,w,h){const c={navy:'#c4302a',plain:'#d8c9a0',jolly:'#06080e',ghost:'#69b8aa'}[t]||'#c4302a';
+ let s=`<path d="M${x} ${y}C${x+w*.3} ${y-5} ${x+w*.6} ${y+5} ${x+w} ${y}L${x+w-2} ${y+h}C${x+w*.6} ${y+h+5} ${x+w*.3} ${y+h-5} ${x} ${y+h}Z" fill="${c}" stroke="#000" stroke-opacity=".5" stroke-width=".6"${t==='ghost'?' opacity=".8" stroke-dasharray="3 2"':''}/>`;
+ if(t==='navy')s+=`<rect x="${x}" y="${y}" width="${w*.34}" height="${h*.45}" fill="#1b3a8a"/><path d="M${x} ${y+h*.22}H${x+w*.34}M${x+w*.17} ${y}V${y+h*.45}" stroke="#fff" stroke-width="1.3"/>`;
+ if(t==='jolly'){const cx=x+w*.5,cy=y+h*.45,r=h*.2;s+=`<path d="M${cx-r*1.6} ${cy+r*1.5}L${cx+r*1.6} ${cy+r*2.6}M${cx+r*1.6} ${cy+r*1.5}L${cx-r*1.6} ${cy+r*2.6}" stroke="#eaf3ff" stroke-width="1.6" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="${r}" fill="#eaf3ff"/><rect x="${cx-r*.55}" y="${cy+r*.6}" width="${r*1.1}" height="${r*.7}" fill="#eaf3ff"/><circle cx="${cx-r*.4}" cy="${cy}" r="${r*.24}" fill="#06080e"/><circle cx="${cx+r*.4}" cy="${cy}" r="${r*.24}" fill="#06080e"/>`}
+ return s}
+function sailG(x,y1,y2,w,P,k,lite){const ym=(y1+y2)/2;let d;
+ if(P.tat){const pts=[];for(let j=0;j<=8;j++)pts.push([x-w+3+(2*w-6)*j/8,y2+(j%2?8:-1)+Math.sin(j*2.1+x)*3]);
+  d=`M${x-w} ${y1}H${x+w}Q${x+w+7} ${ym} ${x+w-3} ${y2}`+pts.reverse().map(p=>`L${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('')+`Q${x-w-7} ${ym} ${x-w} ${y1}Z`}
+ else d=`M${x-w} ${y1}H${x+w}Q${x+w+7} ${ym} ${x+w-3} ${y2}Q${x} ${y2+9} ${x-w+3} ${y2}Q${x-w-7} ${ym} ${x-w} ${y1}Z`;
+ let g=`<g${lite?'':' filter="url(#cloth)"'}><path d="${d}" fill="${P.s}" stroke="${P.rim?P.t:'#00000099'}" stroke-width="${P.rim?1.5:1}"/><path d="${d}" fill="url(#shH)"/>`;
+ for(let j=1;j<4;j++){const xx=x-w+2*w*j/4;g+=`<path d="M${xx} ${y1+1}Q${xx+3} ${ym} ${xx} ${y2+3}" stroke="#000" stroke-opacity=".24" fill="none" stroke-width=".8"/>`}
+ g+=`<path d="M${x-w+2} ${y1+(y2-y1)*.3}H${x+w-2}M${x-w+2} ${y1+(y2-y1)*.62}H${x+w-2}" stroke="#000" stroke-opacity=".16" stroke-width=".7"/>`;
+ if(P.patch&&k%2)g+=`<rect x="${x-w*.5}" y="${y1+(y2-y1)*.4}" width="${w*.5}" height="${(y2-y1)*.3}" fill="#b49a62" opacity=".75"/>`;
+ if(P.tat)g+=`<ellipse cx="${x-w*.3}" cy="${ym}" rx="4" ry="6" fill="#02060f" opacity=".7"/><ellipse cx="${x+w*.35}" cy="${y1+(y2-y1)*.7}" rx="3" ry="4" fill="#02060f" opacity=".7"/>`;
+ return g+`</g><rect x="${x-w-4}" y="${y1-2}" width="${2*w+8}" height="3.4" rx="1.6" fill="url(#mastG)"/>`}
+function shipG(id,lite){const P=SP[id]||SP.wench,N=P.n,xs=N===2?[132,216]:[98,168,236],tops=N===2?[38,52]:[52,16,42],ks=N===2?[3,2]:[2,3,2];
+ let s=`<ellipse cx="170" cy="206" rx="150" ry="8" fill="#000" opacity=".4" filter="url(#blur6)"/>`;
+ if(P.ghost)s+=`<ellipse cx="170" cy="150" rx="150" ry="70" fill="${P.t}" opacity=".13" filter="url(#blur6)"/>`;
+ // rigging behind
+ xs.forEach((x,i)=>{const t=tops[i];
+  if(i<N-1)s+=`<path d="M${x} ${t}L${xs[i+1]} ${tops[i+1]+10}" stroke="#cfe6ff" stroke-opacity=".3" fill="none" stroke-width=".8"/>`;
+  for(const sd of[-1,1]){for(let r=1;r<=6;r++){const f=r/7,y=t+14+f*(112-t-14);s+=`<path d="M${x+sd*30*f*.2} ${y}L${x+sd*30*f} ${y}" stroke="#dbe9ff" stroke-opacity=".3" stroke-width=".7"/>`}
+   s+=`<path d="M${x} ${t+14}L${x+sd*30} 114" stroke="#dbe9ff" stroke-opacity=".4" stroke-width=".8"/>`}});
+ s+=`<path d="M${xs[0]} ${tops[0]}L26 96M${xs[N-1]} ${tops[N-1]}L304 92" stroke="#cfe6ff" stroke-opacity=".35" fill="none" stroke-width=".8"/>`;
+ // masts + sails
+ xs.forEach((x,i)=>{const t=tops[i],k=ks[i],top=t+8,bot=104,step=(bot-top)/k;
+  s+=`<rect x="${x-2.6}" y="${t}" width="5.2" height="${116-t}" fill="url(#mastG)"/>`;
+  for(let j=0;j<k;j++){const y1=top+j*step+3,y2=top+(j+1)*step-4,w=(N===2?20:17)+j*9+(i===1?5:0)-(k===2?2:0);s+=sailG(x,y1,y2,w,P,j+i,lite)}
+  s+=`<ellipse cx="${x}" cy="${t+9}" rx="7" ry="2.4" fill="#1e120a" stroke="#c9a36a" stroke-opacity=".5" stroke-width=".6"/>`});
+ // jibs
+ const fx=xs[N-1],ft=tops[N-1];
+ s+=`<g${lite?'':' filter="url(#cloth)"'}><path d="M306 91L${fx+6} ${ft+14}L268 109Z" fill="${P.s}" stroke="#00000088" stroke-width=".9"/><path d="M306 91L${fx+6} ${ft+14}L268 109Z" fill="url(#shH)"/><path d="M296 95L${fx+6} ${ft+34}L254 111Z" fill="${P.s}" stroke="#00000088" stroke-width=".9" opacity=".95"/><path d="M296 95L${fx+6} ${ft+34}L254 111Z" fill="url(#shH)"/></g>`;
+ // hull
+ const H='M20 100H84V120H236V110H262L300 90L312 94L276 164Q250 196 196 198H78Q36 190 22 150Z';
+ s+=`<g><path d="${H}" fill="${P.h}"${P.ghost?' opacity=".88"':''}/><g clip-path="url(#hc)">`;
+ for(let y=124;y<198;y+=7)s+=`<path d="M18 ${y}Q170 ${y+13} 314 ${y-22}" stroke="#000" stroke-opacity=".3" stroke-width=".9" fill="none"/>`;
+ s+=`<rect x="18" y="96" width="298" height="104" fill="#000" filter="url(#wood)" opacity=".5"/><rect x="18" y="96" width="298" height="104" fill="url(#shV)"/>`;
+ s+=`<path d="M18 128Q170 142 314 106M18 162Q170 178 300 132" stroke="${P.t}" stroke-width="3.2" fill="none" opacity=".9"/><path d="M18 125Q170 139 314 103" stroke="#000" stroke-opacity=".4" stroke-width="1" fill="none"/>`;
+ for(let r=0;r<P.gp;r++)for(let px=98;px<=230;px+=20){const y=136+r*15-(px-98)*.045;s+=`<rect x="${px}" y="${y}" width="10" height="8" rx="1" fill="#03060c" stroke="${P.t}" stroke-opacity=".7" stroke-width=".8"/><rect x="${px+1}" y="${y+1}" width="8" height="2" fill="#fff" opacity=".12"/><circle cx="${px+5}" cy="${y+5}" r="2" fill="#2b3447"/>`}
+ for(let w=0;w<4;w++)s+=`<rect x="${29+w*12}" y="104" width="8" height="10" rx="1.5" fill="#ffd27a" filter="url(#glow)" stroke="#2b1a0c" stroke-width="1"/>`;
+ s+=`<path d="M20 100H84M20 116H84" stroke="${P.t}" stroke-width="1.6" opacity=".9"/>`;
+ if(P.ghost)for(let i=0;i<11;i++)s+=`<path d="M${88+i*15} 122Q${96+i*15} 160 ${88+i*15} 194" stroke="${P.t}" stroke-opacity=".4" fill="none" stroke-width="1.2"/>`;
+ if(P.barn)for(let i=0;i<34;i++)s+=`<circle cx="${34+i*8}" cy="${178+Math.sin(i*3)*6+i*.2}" r="${1.4+R_(i)*1.8}" fill="#7ad0c0" opacity=".8"/>`;
+ s+=`</g><path d="${H}" fill="none" stroke="#000" stroke-opacity=".7" stroke-width="1.4"/>`;
+ s+=`<path d="M84 120H236M236 110H262" stroke="${P.t}" stroke-width="2.2"/>`;
+ for(let x=90;x<236;x+=9)s+=`<path d="M${x} 120V113" stroke="#000" stroke-opacity=".55" stroke-width="1.4"/>`;
+ s+=`<path d="M84 113H236" stroke="#000" stroke-opacity=".5" stroke-width="1.2"/><path d="M262 110L312 94" stroke="url(#mastG)" stroke-width="4" stroke-linecap="round"/>`;
+ s+=`<circle cx="296" cy="146" r="3" fill="${P.t}" opacity=".8"/></g>`;
+ // flags
+ s+=`<path d="M30 62V100" stroke="url(#mastG)" stroke-width="2.4"/>${flagG(P.f,30,62,36,22)}`;
+ xs.forEach((x,i)=>{if(i===1||N===2&&i===0)s+=`<path d="M${x} ${tops[i]-14}V${tops[i]}" stroke="#2b1a0c" stroke-width="1.6"/>${flagG(P.f,x,tops[i]-14,26,11)}`});
+ return `<g transform="translate(170 205)scale(${P.z})translate(-170 -205)">${s}</g>`}
+const waterG=(y=190)=>`<g mask="url(#fadeX)"><path d="${waveD(y,5,34,-30,380)}V240H-30Z" fill="url(#seaF)" opacity=".95"/><path d="${waveD(y,5,34,-30,380)}" fill="none" stroke="#dff1ff" stroke-opacity=".55" stroke-width="1.4"/><path d="${waveD(y+10,4,28,-26,380)}" fill="none" stroke="#bfe0ff" stroke-opacity=".35" stroke-width="1"/></g>`;
+const shipSvg=(id,lite)=>`<svg class="shsv" viewBox="0 0 340 230" aria-hidden="true"${SP[id]&&SP[id].ghost?` style="filter:drop-shadow(0 0 8px ${SP[id].t})"`:''}>${shipG(id,lite)}${waterG()}</svg>`;
+
+function badgeSvg(i){const b=bandOf(i),Rk=RANKS[b],nm=Rk[2].toUpperCase(),fs=Math.min(17,Math.floor(125/(nm.length*.6)));
+ let q=`<svg viewBox="0 0 200 250" class="bsv" aria-hidden="true"><path d="M62 176L44 240L72 230L86 248L100 188Z" fill="#0a1d38" stroke="#000" stroke-width="1.5"/><path d="M138 176L156 240L128 230L114 248L100 188Z" fill="#0a1d38" stroke="#000" stroke-width="1.5"/>`;
+ q+=`<circle cx="100" cy="100" r="96" fill="url(#steel)" stroke="#010409" stroke-width="2.5"/><circle cx="100" cy="100" r="90" fill="none" stroke="#0a1d38" stroke-width="2" stroke-dasharray="2 4.2"/><circle cx="100" cy="100" r="82" fill="none" stroke="#d3e2f4" stroke-width="9"/><circle cx="100" cy="100" r="82" fill="none" stroke="#10243f" stroke-width="9" stroke-dasharray="3 6.2" opacity=".75"/><circle cx="100" cy="100" r="74" fill="#02060f" stroke="#6b97cc" stroke-width="2"/>`;
+ q+=`<g clip-path="url(#bc)"><rect x="29" y="29" width="142" height="142" fill="url(#sky)"/>`;
+ for(let k=0;k<18;k++)q+=`<circle cx="${34+R_(k)*132}" cy="${32+R_(k+40)*62}" r="${.5+R_(k+9)*1.1}" fill="#fff" opacity="${.5+R_(k+3)*.5}"/>`;
+ q+=`<circle cx="138" cy="52" r="36" fill="url(#halo)"/><circle cx="138" cy="52" r="12" fill="url(#moonG)"/><circle cx="134" cy="49" r="2.6" fill="#9fbbe0" opacity=".6"/><circle cx="142" cy="56" r="1.8" fill="#9fbbe0" opacity=".6"/><ellipse cx="62" cy="74" rx="30" ry="5" fill="#9cc4ff" opacity=".22" filter="url(#blur2)"/><ellipse cx="120" cy="86" rx="34" ry="4" fill="#9cc4ff" opacity=".18" filter="url(#blur2)"/>`;
+ q+=`<svg x="20" y="48" width="160" height="108" viewBox="0 0 340 230">${shipG(Rk[3],true)}</svg>`;
+ q+=`<path d="${waveD(142,4,22,20,180)}V172H20Z" fill="url(#sea)"/><path d="${waveD(142,4,22,20,180)}" fill="none" stroke="#dff1ff" stroke-opacity=".6" stroke-width="1.2"/><path d="${waveD(154,3,18,16,184)}V172H16Z" fill="#031428" opacity=".6"/>`;
+ q+=`<circle cx="100" cy="100" r="71" fill="url(#vig)"/><ellipse cx="78" cy="46" rx="40" ry="16" fill="#fff" opacity=".09" transform="rotate(-25 78 46)"/></g>`;
+ for(let k=0;k<9;k++){const th=(96+k*9.6)*Math.PI/180,x=100+67*Math.cos(th),y=100+67*Math.sin(th),a=th*180/Math.PI;for(const m of[-1,1]){const xx=100+m*(x-100);q+=`<ellipse cx="${xx.toFixed(1)}" cy="${y.toFixed(1)}" rx="3.8" ry="9" transform="rotate(${m>0?a:180-a} ${xx.toFixed(1)} ${y.toFixed(1)})" style="fill:var(--t)" stroke="#02060f" stroke-width=".7"/>`}}
+ q+=`<path d="M100 3L110 17L100 31L90 17Z" style="fill:var(--t)" stroke="#02060f" stroke-width="1.5" filter="url(#glow)"/><path d="M100 3L110 17L100 17Z" fill="#fff" opacity=".45"/>`;
+ for(const[cx,cy]of[[18,100],[182,100]])q+=`<circle cx="${cx}" cy="${cy}" r="6.5" style="fill:var(--t)" stroke="#02060f" stroke-width="1.5" filter="url(#glow)"/><circle cx="${cx-1.8}" cy="${cy-1.8}" r="2" fill="#fff" opacity=".7"/>`;
+ q+=`<path d="M22 192H178L168 212L178 232H22L32 212Z" style="fill:var(--t)" stroke="#02060f" stroke-width="2.2"/><path d="M22 192H178L168 212L178 232H22L32 212Z" fill="url(#shV)"/><path d="M30 196H170M30 228H170" stroke="#fff" stroke-opacity=".5" stroke-width=".9"/><text x="100" y="${218+(19-fs)*.2}" text-anchor="middle" font-family="Pirata One,Cinzel,serif" font-size="${fs}" fill="#f2f9ff" stroke="#02060f" stroke-width=".8" paint-order="stroke">${nm}</text>`;
+ q+=`<circle cx="100" cy="177" r="17" fill="url(#steel)" stroke="#02060f" stroke-width="2"/><circle cx="100" cy="177" r="13" fill="#071a33" stroke="var(--t)" stroke-width="1.6"/><text x="100" y="183.5" text-anchor="middle" font-size="16">${OPP[i].ic}</text>`;
+ return q+`</svg>`}
+function portraitSvg(e,i){return `<svg viewBox="0 0 120 150" class="psv" aria-hidden="true"><ellipse cx="60" cy="72" rx="57" ry="69" fill="url(#steel)" stroke="#010409" stroke-width="2.5"/><ellipse cx="60" cy="72" rx="51" ry="63" fill="none" stroke="#10243f" stroke-width="2" stroke-dasharray="2 4"/><ellipse cx="60" cy="72" rx="46" ry="58" fill="url(#cam)" stroke="var(--t)" stroke-width="3"/><ellipse cx="60" cy="72" rx="46" ry="58" fill="url(#vig)"/><text x="60" y="94" text-anchor="middle" font-size="58" filter="url(#glow)">${e}</text><path d="M42 124H78L84 138H36Z" fill="url(#steel)" stroke="#010409" stroke-width="1.6"/><text x="60" y="135" text-anchor="middle" font-family="Cinzel,serif" font-weight="800" font-size="10" fill="#02060f">No. ${i+1}</text><path d="M60 -2L70 10L60 22L50 10Z" style="fill:var(--t)" stroke="#02060f" stroke-width="1.5" filter="url(#glow)"/>${[0,1,2,3,4,5,6,7].map(k=>{const a=k*Math.PI/4;return `<circle cx="${60+54*Math.cos(a)}" cy="${72+66*Math.sin(a)}" r="2.6" fill="#cfe6ff" stroke="#010409" stroke-width=".8"/>`}).join('')}</svg>`}
+function roseSvg(){let s='<circle cx="100" cy="100" r="95" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="1 3"/>';
+ for(let i=0;i<72;i++){const a=i*5*Math.PI/180,l=i%18===0?12:i%2?4:7,sn=Math.sin(a),cs=Math.cos(a);s+=`<line x1="${100+88*sn}" y1="${100-88*cs}" x2="${100+(88-l)*sn}" y2="${100-(88-l)*cs}" stroke="currentColor" stroke-width="1.2"/>`}
+ for(let i=0;i<16;i++){const a=i*22.5*Math.PI/180,r=i%4===0?80:i%2===0?60:42,w=i%4===0?9:6,tx=100+r*Math.sin(a),ty=100-r*Math.cos(a),bx=w*Math.cos(a),by=w*Math.sin(a);
+  s+=`<path d="M${tx} ${ty}L${100+bx} ${100+by}L100 100Z" fill="currentColor" opacity=".95"/><path d="M${tx} ${ty}L${100-bx} ${100-by}L100 100Z" fill="currentColor" opacity=".45"/>`}
+ return s+'<circle cx="100" cy="100" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="100" cy="100" r="3.5" fill="currentColor"/><text x="100" y="22" text-anchor="middle" font-family="Pirata One,serif" font-size="17" fill="currentColor">N</text>'}
+function sceneSvg(){let s=`<rect width="1200" height="320" fill="url(#sky2)"/>`;
+ for(let k=0;k<110;k++)s+=`<circle cx="${R_(k)*1200}" cy="${R_(k+70)*190}" r="${.4+R_(k+5)*1.3}" fill="#fff" opacity="${.3+R_(k+2)*.7}"/>`;
+ s+=`<circle cx="930" cy="92" r="130" fill="url(#halo)"/><circle cx="930" cy="92" r="40" fill="url(#moonG)"/><circle cx="918" cy="80" r="7" fill="#9fbbe0" opacity=".55"/><circle cx="942" cy="102" r="5" fill="#9fbbe0" opacity=".55"/><circle cx="934" cy="74" r="3.5" fill="#9fbbe0" opacity=".5"/>`;
+ for(const[cx,cy,rx,ry]of[[200,70,150,16],[480,120,190,14],[760,60,150,12],[1040,150,170,15],[110,170,120,12]])s+=`<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="#8fb8ee" opacity=".16" filter="url(#blur6)"/>`;
+ s+=`<rect y="238" width="1200" height="82" fill="url(#sea)"/>`;
+ for(let k=0;k<14;k++)s+=`<rect x="${930-(46-k*3)}" y="${244+k*5}" width="${(46-k*3)*2}" height="1.8" fill="#dff1ff" opacity="${.65-k*.04}"/>`;
+ for(const[x,sz,o]of[[120,.22,.5],[330,.17,.4],[640,.2,.45]])s+=`<svg x="${x}" y="${222-230*sz*.78}" width="${340*sz}" height="${230*sz}" viewBox="0 0 340 230" opacity="${o}">${shipG('dutchman',true)}</svg>`;
+ return s+`<path d="${waveD(286,6,60,-60,1280)}V320H-60Z" fill="#06203f" opacity=".85"/><path d="${waveD(286,6,60,-60,1280)}" fill="none" stroke="#9fd0ff" stroke-opacity=".35" stroke-width="1.5"/><path d="${waveD(304,5,48,-40,1280)}V320H-60Z" fill="#020b17"/>`}
+
+document.body.insertAdjacentHTML('afterbegin',DEFS);
+const RANKS=[[0,'Castaway','Wicked Wench','wench'],[2,'Deckhand','HMS Interceptor','interceptor'],[5,'Buccaneer','HMS Providence','providence'],[7,'Privateer','HMS Dauntless','dauntless'],[10,'Corsair','HMS Endeavour','endeavour'],[12,'Captain','Queen Anne’s Revenge','qar'],[15,'Commodore','Silent Mary','mary'],[17,'Pirate Lord','Black Pearl','pearl'],[20,'Admiral of the Seven Seas','Flying Dutchman','dutchman']],
+BC=['#7f8da3','#6fb0ff','#4f9bff','#6f7cff','#9a7cff','#c0cce0','#4fe0d0','#2f7dff','#7dffe6'],
+cnt=()=>S.beat.filter(Boolean).length,rkOf=n=>RANKS.reduce((a,r,i)=>n>=r[0]?i:a,0),bandOf=i=>RANKS.findIndex(r=>r[0]>=i+1);
+const FLAG=`<svg class="fl" viewBox="0 0 120 92" aria-hidden="true"><path d="M16 6V90" stroke="url(#mastG)" stroke-width="4"/>${flagG('jolly',16,10,96,62)}</svg>`;
+function flash(id){const e=$('#'+id);e.classList.remove('fire');void e.offsetWidth;e.classList.add('fire')}
+function duel(mat){$('#hY').style.width=Math.max(3,mat[human]/39)+'%';$('#hE').style.width=Math.max(3,mat[opp(human)]/39)+'%'}
+/* AI-START */
+const PV=[0,100,320,330,500,900,0];
+function evalB(p){const b=p.b;let s=0,q=0;for(let i=0;i<64;i++)if(b[i]===5||b[i]===-5)q++;
+ for(let sq=0;sq<64;sq++){const v=b[sq];if(!v)continue;const t=Math.abs(v),f=sq&7,r=sq>>3,w=v>0,adv=w?r:7-r,cd=Math.abs(3.5-f)+Math.abs(3.5-r);let val=PV[t];
+  if(t===1)val+=(adv-1)*7+((3-Math.abs(3.5-f))*4|0);else if(t===2||t===3)val+=((7-cd)*5|0)+(adv===0?-12:0);else if(t===4)val+=adv===6?18:0;else if(t===5)val+=(7-cd)|0;
+  else val+=q?(adv===0?20:-adv*14)+(Math.abs(3.5-f)>2?18:0):((7-cd)*6|0);s+=w?val:-val}return s}
+const ev=p=>evalB(p)*(p.w?1:-1),mvs=m=>(m.c?10*PV[m.c]-PV[m.p]:0)+(m.pr?800:0),ord=a=>a.sort((x,y)=>mvs(y)-mvs(x));
+let nodes=0;
+function qs(p,a,b,d,dl){if((++nodes&255)===0&&Date.now()>dl)throw'T';const st=ev(p);if(st>=b)return b;if(st>a)a=st;if(!d)return a;
+ for(const m of ord(p.gen().filter(m=>m.c||m.pr))){p.make(m);const v=-qs(p,-b,-a,d-1,dl);p.unmake();if(v>=b)return b;if(v>a)a=v}return a}
+function ng(p,d,a,b,dl){if((++nodes&255)===0&&Date.now()>dl)throw'T';if(d<=0)return qs(p,a,b,4,dl);const ms=p.gen();if(!ms.length)return p.inCheck()?-99000-d:0;
+ for(const m of ord(ms)){p.make(m);const v=-ng(p,d-1,-b,-a,dl);p.unmake();if(v>=b)return b;if(v>a)a=v}return a}
+function search(){const L=OPP[cur],root=g.clone(),ms=ord(root.gen()),dl=Date.now()+(L.t||1e9);let best=ms[0];
+ for(let d=1;d<=L.d;d++){let pick=null,cs=-1e9,al=-1e9;
+  try{for(const m of ms){root.make(m);const v=-ng(root,d-1,-1e9,-al,dl);root.unmake();const sc=v+Math.random()*L.z;if(sc>cs){cs=sc;pick=m}if(!L.z)al=Math.max(al,v)}}
+  catch(e){if(e!=='T')throw e;break}
+  best=pick;if(cs>90000)break}
+ return{from:SQN[best.f],to:SQN[best.t],promotion:best.pr?PCH_[best.pr-1]:undefined}}
+/* AI-END */
+/* ---------- game flow ---------- */
+const opp=c=>c==='w'?'b':'w';
+function startGame(){g.reset();last=null;human=cfg.side==='r'?(Math.random()<.5?'w':'b'):cfg.side;flip=human==='b';sel=null;tg=[];busy=false;over=false;
+ const t=TC[cfg.tc];clk.w=clk.b=t[1]*1000;inc=t[2]*1000;$('#over').classList.remove('show');say('');renderOpp();render();if(g.turn()!==human)aiMove()}
+function play(m){const mover=g.turn(),r=g.move({from:m.from,to:m.to,promotion:m.promotion||'q'});if(!r)return;if(inc)clk[mover]+=inc;last=[r.from,r.to];sel=null;tg=[];say('');if(r.captured)flash(r.color===human?'sY':'sE');afterMove()}
+function afterMove(){render();
+ if(g.in_checkmate())return finish(opp(g.turn()),'Checkmate');
+ if(g.in_stalemate())return finish('d','Stalemate');
+ if(g.in_draw())return finish('d',g.insufficient_material()?'Too few pieces':g.in_threefold_repetition()?'Repetition':'Fifty quiet moves');
+ if(g.turn()!==human)aiMove()}
+function aiMove(){busy=true;render();setTimeout(()=>{if(over)return;const m=search();busy=false;if(!over&&m)play(m)},70)}
+function finish(win,why){if(over)return;over=true;busy=false;const o=OPP[cur];let h,m,bd='',promo='';
+ if(win==='d'){h='Parley';S.d++;m=`A draw with ${o.n}. Neither flag falls. (${why})`}
+ else if(win===human){h='Victory!';S.w++;const f=!S.beat[cur],r0=rkOf(cnt());S.beat[cur]=1;const r1=rkOf(cnt());if(r1>r0)promo=`<div class="promo"><div class="cz">PROMOTED!</div>${shipSvg(RANKS[r1][3])}You are now <b>${RANKS[r1][1]}</b> aboard the <b>${RANKS[r1][2]}</b>.</div>`;m=`${o.n} strikes the colours (${why}). ${f?'A new badge joins your chest:':'Already in your chest:'} <b>${o.bn}</b>`;bd=badge(cur,1)}
+ else{h='Sunk!';S.l++;m=`${o.n} takes the day (${why}). Rematch?`}
+ if(win!=='d')$(win===human?'#sE':'#sY').classList.add('sink');save();$('#oh').textContent=h;$('#os').innerHTML=m;$('#ob').innerHTML=bd;$('#op').innerHTML=promo;
+ $('#obt').innerHTML=(win===human&&cur<19?'<button id="nx">Next captain</button>':'')+'<button id="rm">Rematch</button><button id="tf">The fleet</button>';
+ $('#over').classList.add('show');render()}
+$('#obt').onclick=e=>{const id=e.target.id;if(id==='nx'){cur++;startGame()}else if(id==='rm')startGame();else if(id==='tf'){$('#over').classList.remove('show');location.hash='#/fleet'}};
+setInterval(()=>{const t=Date.now(),dt=t-lastT;lastT=t;if(over||!TC[cfg.tc][1]||!g.history().length)return;const c=g.turn();clk[c]-=dt;
+ if(clk[c]<=0){clk[c]=0;finish(opp(c),'Flag fell');return}paintClocks()},100);
+/* ---------- rendering ---------- */
+function say(t){$('#msg').innerHTML=t}
+function kingSq(){const b=g.board();for(let r=0;r<8;r++)for(let c=0;c<8;c++){const p=b[r][c];if(p&&p.type==='k'&&p.color===g.turn())return'abcdefgh'[c]+(8-r)}}
+const fmt=ms=>{if(!TC[cfg.tc][1])return'∞';const s=Math.max(0,ms)/1000;return s<10?s.toFixed(1):Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')};
+function nameOf(c){const o=OPP[cur],R=RANKS[rkOf(cnt())];return c===human?['CAPTAIN YOU',R[1]+' · '+R[2],'🏴‍☠️']:[o.n,o.ti,o.ic]}
+function paintClocks(){for(const [id,c] of [['#pt',flip?'w':'b'],['#pb',flip?'b':'w']]){const k=$(id+' .clk');k.textContent=fmt(clk[c]);k.classList.toggle('act',!over&&g.turn()===c)}}
+function renderOpp(){const o=OPP[cur];$('#oPt').innerHTML=portraitSvg(o.ic,cur);$('#oPt').style.setProperty('--t',BC[bandOf(cur)]);$('#oN').textContent=o.n;$('#oT').textContent=o.ti;$('#oTh').style.width=(cur+1)*5+'%';
+ $('#oL').textContent=`CAPTAIN ${cur+1} OF 20 · THREAT ${cur+1}/20 · BADGE: ${RANKS[bandOf(cur)][2].toUpperCase()}`;$('#oB').textContent='“'+o.ta+'”';
+ $('#sY').className='';$('#sE').className='';$('#sY').innerHTML=shipSvg(RANKS[rkOf(cnt())][3]);$('#sE').innerHTML=FLAG}
+function render(){
+ const b=g.board(),chk=g.in_check()?kingSq():null;let h='';
+ for(let i=0;i<8;i++)for(let j=0;j<8;j++){const r=flip?7-i:i,c=flip?7-j:j,sq='abcdefgh'[c]+(8-r),p=b[r][c];
+  h+=`<div class="sq ${(r+c)%2?'dk':'lt'}${last&&last.includes(sq)?' last':''}${sq===chk?' chk':''}${sq===sel?' sel':''}${tg.includes(sq)?' tg'+(p?' oc':''):''}" data-s="${sq}">${j===0?`<i class="co r">${8-r}</i>`:''}${i===7?`<i class="co f">${'abcdefgh'[c]}</i>`:''}${p?`<span class="pc ${p.color}">${GL[p.type]}</span>`:''}</div>`}
+ $('#board').innerHTML=h;
+ const st={p:8,n:2,b:2,r:2,q:1},cnt={w:{p:0,n:0,b:0,r:0,q:0},b:{p:0,n:0,b:0,r:0,q:0}},mat={w:0,b:0};
+ b.flat().forEach(p=>{if(p&&p.type!=='k'){cnt[p.color][p.type]++;mat[p.color]+=V[p.type]}});
+ for(const [id,c] of [['#pt',flip?'w':'b'],['#pb',flip?'b':'w']]){const o=opp(c);let gl='';
+  for(const t of 'qrbnp')for(let i=cnt[o][t];i<st[t];i++)gl+=`<span style="color:${o==='w'?'#fff6df':'#58b4ff'}">${GL[t]}</span>`;
+  const d=(mat[c]-mat[o])/100,[n1,n2,n3]=nameOf(c);$(id+' b').textContent=n1;$(id+' small').textContent=n2;$(id+' .em').textContent=n3;$(id+' .cp').innerHTML=gl+(d>0?`<em>+${d.toFixed(0)}</em>`:'')}
+ paintClocks();duel(mat);
+ const h2=g.history(),mv=$('#mv');
+ if(!h2.length)mv.innerHTML='<span class="e">No moves yet. White opens the battle.</span>';
+ else{let t='';for(let i=0;i<h2.length;i+=2)t+=`<span class="n">${i/2+1}</span><span>${h2[i]}</span><span>${h2[i+1]||''}</span>`;mv.innerHTML=t;mv.scrollTop=mv.scrollHeight}
+ const cp=g.in_checkmate()?(g.turn()==='w'?-9999:9999):evalB(g),pct=50+50*Math.tanh(cp/450),e=$('#ev'),f=$('#ev i');
+ e.style.background=flip?'#fff6df':'#1b1320';f.style.background=flip?'#1b1320':'#fff6df';f.style.height=pct+'%';f.style.top=flip?'0':'auto';f.style.bottom=flip?'auto':'0';
+ $('#turn').textContent=over&&h2.length?'The battle is over':busy?OPP[cur].n+' is plotting…':g.in_check()?'CHECK!':(g.turn()==='w'?'White to move':'Black to move')}
+function buildSetup(){
+ const seg=(id,items,key,map)=>{const el=$(id);el.innerHTML='';items.forEach((t,i)=>{const v=map?map[i]:i,b=document.createElement('button');b.textContent=t;b.className=cfg[key]===v?'on':'';b.onclick=()=>{cfg[key]=v;buildSetup()};el.appendChild(b)})};
+ seg('#sSide',['White','Black','Random'],'side',['w','b','r']);seg('#sTc',TC.map(t=>t[0]),'tc')}
+/* ---------- pages ---------- */
+function fleet(){const n=cnt(),ri=rkOf(n),R=RANKS[ri],N=RANKS[ri+1],nx=S.beat.findIndex(x=>!x);
+ $('#myS').innerHTML=shipSvg(R[3]);
+ $('#fp').innerHTML=`<span class="cz">RANK: ${R[1].toUpperCase()} · ${R[2].toUpperCase()}</span><br>${n} OF 20 CAPTAINS DEFEATED · ${S.w} WINS · ${S.d} DRAWS · ${S.l} LOSSES<br>${N?`${N[0]-n} MORE TO BE PROMOTED TO ${N[1].toUpperCase()} ABOARD THE ${N[2].toUpperCase()}`:'SUPREME RANK ACHIEVED'}`;
+ $('#fb').style.width=(N?(n-R[0])/(N[0]-R[0])*100:100)+'%';$('#bAll').textContent=S.all?'Seas are charted (all unlocked)':'Chart all seas (unlock everyone)';
+ $('#fl').innerHTML=OPP.map((o,i)=>{const ok=open_(i),dn=S.beat[i];return `<div class="card fc opp${ok?'':' lock'}" style="--t:${BC[bandOf(i)]}"><div class="no">${i+1}</div>${i===nx?'<div class="anch">⚓ Next on your voyage</div>':''}${dn?`<div class="bdw">${badge(i,1)}</div>`:''}<div class="pt" style="--t:${BC[bandOf(i)]}">${portraitSvg(o.ic,i)}</div><h3>${o.n}</h3><div class="tt">${o.ti}</div><div class="thr"><i style="width:${(i+1)*5}%"></i></div><div class="lab">THREAT ${i+1}/20 · BADGE: ${RANKS[bandOf(i)][2].toUpperCase()}</div><p>“${o.ta}”</p><button class="go" data-i="${i}" ${ok?'':'disabled'}>${ok?(dn?'Rematch':'Challenge'):'🔒 Defeat #'+i}</button></div>`}).join('')}
+$('#fl').onclick=e=>{const b=e.target.closest('button[data-i]');if(!b||b.disabled)return;cur=+b.dataset.i;location.hash='#/play';startGame()};
+$('#bAll').onclick=()=>{S.all=S.all?0:1;save();fleet()};
+$('#bReset').onclick=()=>{if(!window.__rs){window.__rs=1;$('#bReset').textContent='Press again to confirm';setTimeout(()=>{window.__rs=0;$('#bReset').textContent='Burn the logbook (reset)'},3000);return}S={beat:Array(20).fill(0),all:0,w:0,d:0,l:0};save();window.__rs=0;$('#bReset').textContent='Burn the logbook (reset)';fleet()};
+function treasury(){const n=cnt(),ri=rkOf(n);$('#tc').textContent=`${n} of 20 badges · Rank: ${RANKS[ri][1]} aboard the ${RANKS[ri][2]}`;
+ $('#ld').innerHTML=RANKS.map((r,i)=>`<div class="card bt${i<=ri?'':' offc'}" style="--t:${BC[i]}"><div class="shp">${shipSvg(r[3])}</div><span>${r[2].toUpperCase()}</span><small>${r[1]} · ${r[0]?'beat '+r[0]+' captains':'starting ship'}</small></div>`).join('');
+ $('#tb').innerHTML=OPP.map((o,i)=>{const on=S.beat[i];return `<div class="card bt" style="--t:${BC[bandOf(i)]}">${badge(i,on)}<span>${on?o.bn.toUpperCase():'???'}</span><small>${on?'Won from '+o.n:'Defeat '+o.n+' to claim'}</small><small>Ship badge: ${RANKS[bandOf(i)][2]}</small></div>`}).join('')}
+const PCS=[['k','The Captain','Steps one square any way. Lose him and the ship is lost.'],['q','The Flagship','Sails any distance along rank, file or diagonal. Your heaviest broadside.'],['r','The Fortress Cannon','Fires along ranks and files. Helps the captain castle.'],['b','The Navigator','Reads the diagonals and never leaves its colour.'],['n','The Privateer','Leaps in an L, over friend and foe alike.'],['p','The Deckhand','Steps forward, strikes diagonally, dreams of promotion.']];
+$('#ar').innerHTML=PCS.map(p=>`<div class="card"><span class="gl">${GL[p[0]]}</span><div class="nm">${p[1]}</div><p>${p[2]}</p></div>`).join('');
+const PG=['fleet','play','treasury','articles'];
+function route(){let p=location.hash.replace('#/','')||'fleet';if(!PG.includes(p))p='fleet';PG.forEach(x=>{$('#p-'+x).hidden=x!==p;$('#n-'+x).classList.toggle('on',x===p)});if(p==='fleet')fleet();if(p==='treasury')treasury();if(p==='play'&&over&&!g.history().length)startGame();scrollTo(0,0)}
+addEventListener('hashchange',route);
+/* ---------- input ---------- */
+$('#board').addEventListener('click',e=>{const d=e.target.closest('.sq');if(!d||busy||over||g.turn()!==human)return;
+ const sq=d.dataset.s,p=g.get(sq);if(sel&&tg.includes(sq))return play({from:sel,to:sq});
+ sel=null;tg=[];if(p&&p.color===g.turn()){sel=sq;tg=g.moves({square:sq,verbose:true}).map(m=>m.to)}render()});
+$('#go').onclick=startGame;$('#bFl').onclick=()=>location.hash='#/fleet';
+$('#bFlip').onclick=()=>{flip=!flip;render()};
+$('#bUndo').onclick=()=>{if(busy||over||!g.history().length)return;g.undo();if(g.turn()!==human&&g.history().length)g.undo();
+ const h=g.history({verbose:true}),l=h[h.length-1];last=l?[l.from,l.to]:null;sel=null;tg=[];render();if(g.turn()!==human)aiMove()};
+$('#bRes').onclick=()=>{if(!over)finish(opp(human),'You struck your colours')};
+$('#bDraw').onclick=()=>{if(over||busy)return;const e=evalB(g)*(human==='w'?-1:1);if(g.history().length>=16&&e<=60)finish('d','Parley accepted');else say(OPP[cur].n+' refuses to parley.')};
+$('#bTh').onclick=()=>{const r=document.documentElement,lt=matchMedia('(prefers-color-scheme:light)').matches,c=r.dataset.theme||(lt?'dusk':'midnight');r.dataset.theme=c==='dusk'?'midnight':'dusk'};
+document.querySelectorAll('.rose').forEach(e=>e.innerHTML=roseSvg());$('.hscene').innerHTML=sceneSvg();$('#hship').innerHTML=`<svg class="shsv" viewBox="0 0 340 230" aria-hidden="true">${shipG('pearl',true)}</svg>`;
+{const n=S.beat.findIndex(x=>!x);cur=n<0?19:n}
+buildSetup();renderOpp();render();route();
+</script>
+</body>
+</html>

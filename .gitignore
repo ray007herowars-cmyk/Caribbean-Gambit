@@ -1,0 +1,21 @@
+# dependencies and tooling
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.vercel/
+.env
+.env.*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test and build output
+coverage/
+*.log
+*.tmp
+playwright-report/
+test-results/
